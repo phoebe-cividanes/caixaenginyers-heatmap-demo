@@ -3,4 +3,4 @@ from OSMPythonTools.api import Api
 api = Api()
 way = api.query('way/5887599')
 
-way
+print("Way is: ", way)
