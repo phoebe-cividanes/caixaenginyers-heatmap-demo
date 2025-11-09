@@ -25,7 +25,9 @@ class SimpleMovingAverage:
             return series.ewm(span=self.n_elements, adjust=False).mean().iloc[-1]
 
     def predict(self, target_column: str):
-        target_df = self.df[self.df["Municipios"] == target_column].copy()
+        target_df = self.df[self.df["Municipios"].str.contains(target_column, case=False, na=False)].copy()
+        if target_df.empty:
+            raise ValueError(f"No match found for municipality '{target_column}'. Available options include: {self.cities[:5]} ...")
         target_df = target_df.sort_values("Periodo")
         target_df["Total"] = target_df["Total"].astype(str).str.replace(",", ".").astype(float)
         history = target_df.copy()
@@ -33,13 +35,15 @@ class SimpleMovingAverage:
         for _ in range(self.n_years):
             new_value = self._compute_next(target_df["Total"])
             new_period = target_df["Periodo"].max() + 1
-            target_df.loc[len(target_df)] = [target_column, new_period, new_value]
+            target_df.loc[len(target_df)] = [target_df["Municipios"].iloc[0], new_period, new_value]
 
         return history, target_df
 
     def backtest(self, target_column: str):
         """Leave-one-out time-series backtesting."""
-        target_df = self.df[self.df["Municipios"] == target_column].copy()
+        target_df = self.df[self.df["Municipios"].str.contains(target_column, case=False, na=False)].copy()
+        if target_df.empty:
+            raise ValueError(f"No match found for municipality '{target_column}'.")
         target_df = target_df.sort_values("Periodo")
         target_df["Total"] = target_df["Total"].astype(str).str.replace(",", ".").astype(float)
 
@@ -97,9 +101,9 @@ class SimpleMovingAverage:
 if __name__ == "__main__":
     df = pd.read_csv("../data/popu_growth_population.csv", sep="\t")
 
-    sma = SimpleMovingAverage(df, n_elements=4, n_years=4, mode="EMA")
+    sma = SimpleMovingAverage(df, n_elements=4, n_years=4, mode="SMA")
 
-    target_city = "33066 Siero"
+    target_city = "Terrassa"
     history, predicted = sma.predict(target_city)
     sma.plot_prediction(history, predicted, target_city)
 
