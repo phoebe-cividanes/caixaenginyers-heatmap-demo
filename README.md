@@ -235,4 +235,8 @@ Este proyecto fue desarrollado para el **HackUAB** organizado por Caixa d'Enginy
 
 ## 📄 Licencia
 
-[Añadir licencia aquí]
+MIT License
+
+Copyright (c) 2025 caixaenginyers-heatmap-demo
+
+Ver el archivo [LICENSE](LICENSE) para más detalles.
