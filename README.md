@@ -1,4 +1,8 @@
-# Caixa d'Enginyers Heatmap Demo 🌍
+# Caixa d'Enginyers Future Offices 🌍
+Finding the best locations in Spain to place three new offices or mobile points for Caixa d'Enginyers, balancing social impact and economic sustainability.
+![logo](github/logo.png)
+
+![demo](github/demo.mp4)
 
 Mapa de calor interactivo que identifica las zonas con mayor potencial de apertura de oficinas
 o puntos móviles de Caixa d'Enginyers, equilibrando impacto social y sostenibilidad económica.
