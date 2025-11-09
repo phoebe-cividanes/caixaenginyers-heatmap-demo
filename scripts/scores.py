@@ -131,7 +131,7 @@ def run_pca_scoring(df):
         'bancos',
         'depopulation_risk',
         'perc_over_65',
-        'perc_under_30'
+        'perc_under_35'
     ]
     
     for feature in features:
@@ -140,7 +140,7 @@ def run_pca_scoring(df):
     X = df[features].values
 
     X_scaled = StandardScaler().fit_transform(X)
-    
+
     pca = PCA(n_components=2)
     principal_components = pca.fit_transform(X_scaled)
 
