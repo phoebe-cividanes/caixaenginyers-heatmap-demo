@@ -4,24 +4,52 @@ Using the sophisticated Economic and Social Scoring System
 """
 
 import os
+import sys
 import numpy as np
 import pandas as pd
 import streamlit as st
 import pydeck as pdk
 from pathlib import Path
+import argparse as ap
+
+# ===========================================
+# COMMAND LINE ARGUMENTS
+# ===========================================
+
+def parse_arguments():
+    """Parse command line arguments."""
+    parser = ap.ArgumentParser(description="Streamlit app for branch location optimization")
+    parser.add_argument(
+        "--data-path",
+        type=str,
+        default=None,
+        help="Path to the scored municipalities CSV file (e.g., municipalities_scored_clean.csv)"
+    )
+    
+    # Parse known args to avoid conflicts with Streamlit's own arguments
+    args, unknown = parser.parse_known_args()
+    return args
+
+# Parse arguments at module level
+ARGS = parse_arguments()
 
 # ===========================================
 # DATA LOADING
 # ===========================================
 
 @st.cache_data
-def load_scored_data():
+def load_scored_data(data_path=None):
     """Load the pre-scored municipality data."""
-    # Try to load the cleaned scored data
-    data_path = Path(__file__).parent.parent / "data" / "municipalities_scored_clean.csv"
+    # Use provided path or default
+    if data_path is None:
+        if ARGS.data_path:
+            data_path = Path(ARGS.data_path)
+        else:
+            # Default path
+            data_path = Path(__file__).parent.parent / "data" / "municipalities_scored_clean.csv"
     
     if not data_path.exists():
-        st.error(f"❌ Scored data not found at {data_path}")
+        st.error(f"Scored data not found at {data_path}")
         st.info("Run: `python scripts/apply_scoring_pipeline.py` to generate scores")
         st.stop()
     
@@ -31,38 +59,112 @@ def load_scored_data():
 
 @st.cache_data
 def load_geospatial_data():
-    """Load geospatial data for municipalities (lat/lon)."""
-    # TODO: Load your GeoJSON or CSV with municipality coordinates
-    # For now, we'll create synthetic coordinates based on province
+    """Load geospatial data for municipalities from GeoJSON."""
+    geojson_path = Path(__file__).parent.parent / "data" / "citylocation.geojson"
     
-    # This is a placeholder - replace with actual coordinates
-    province_centers = {
-        'Madrid': (40.4168, -3.7038),
-        'Barcelona': (41.3851, 2.1734),
-        'Valencia/València': (39.4699, -0.3763),
-        'Sevilla': (37.3891, -5.9845),
-        'Coruña, A': (43.3713, -8.3960),
-        'Bizkaia': (43.2630, -2.9350),
-        'Alicante/Alacant': (38.3452, -0.4810),
-        'Murcia': (37.9922, -1.1307),
-        'Palmas, Las': (28.1236, -15.4366),
-        'Zaragoza': (41.6488, -0.8891),
-    }
+    if not geojson_path.exists():
+        st.warning(f"GeoJSON file not found at {geojson_path}")
+        return pd.DataFrame(columns=['name', 'lat', 'lon'])
     
-    return province_centers
+    try:
+        import json
+        
+        with open(geojson_path, 'r', encoding='utf-8') as f:
+            geojson_data = json.load(f)
+        
+        # Extract municipality names and coordinates
+        locations = []
+        for feature in geojson_data['features']:
+            props = feature.get('properties', {})
+            geom = feature.get('geometry', {})
+            
+            if geom.get('type') == 'Point' and 'coordinates' in geom:
+                name = props.get('name', '')
+                coords = geom['coordinates']
+                
+                if name and len(coords) >= 2:
+                    locations.append({
+                        'name': name,
+                        'lon': coords[0],  # GeoJSON is [lon, lat]
+                        'lat': coords[1]
+                    })
+        
+        df_geo = pd.DataFrame(locations)
+        print(f"Loaded {len(df_geo)} municipalities from GeoJSON")
+        return df_geo
+        
+    except Exception as e:
+        st.error(f"Error loading GeoJSON: {str(e)}")
+        return pd.DataFrame(columns=['name', 'lat', 'lon'])
 
 
-def merge_geospatial(df, province_centers):
-    """Add lat/lon to municipalities based on province centers (simplified)."""
-    # This is a simplified approach - in production, you'd have exact coordinates
+def merge_geospatial(df, df_geo):
+    """Add lat/lon to municipalities by matching names with GeoJSON data."""
     df = df.copy()
     
-    # Add slight random offset to province centers for visualization
-    np.random.seed(42)
-    df['lat'] = df['provincia'].map(lambda p: province_centers.get(p, (40.0, 0.0))[0]) + np.random.uniform(-0.5, 0.5, len(df))
-    df['lon'] = df['provincia'].map(lambda p: province_centers.get(p, (40.0, 0.0))[1]) + np.random.uniform(-0.5, 0.5, len(df))
+    if df_geo.empty:
+        st.warning("No geospatial data available. Using default coordinates.")
+        df['lat'] = 40.4168
+        df['lon'] = -3.7038
+        return df
     
-    return df
+    # Check if municipio column exists
+    if 'municipio' not in df.columns:
+        st.error("Error: 'municipio' column not found in data")
+        df['lat'] = 40.4168
+        df['lon'] = -3.7038
+        return df
+    
+    # Normalize municipality names for better matching
+    df['municipio_normalized'] = df['municipio'].str.strip().str.lower()
+    df_geo['name_normalized'] = df_geo['name'].str.strip().str.lower()
+    
+    # Merge on normalized names
+    df_merged = df.merge(
+        df_geo[['name_normalized', 'lat', 'lon']],
+        left_on='municipio_normalized',
+        right_on='name_normalized',
+        how='left'
+    )
+    
+    # Count matches
+    matched = df_merged['lat'].notna().sum()
+    total = len(df_merged)
+    match_rate = (matched / total * 100) if total > 0 else 0
+    
+    print(f"Matched {matched}/{total} municipalities ({match_rate:.1f}%)")
+    
+    # For unmatched municipalities, try alternative matching strategies
+    unmatched_mask = df_merged['lat'].isna()
+    if unmatched_mask.sum() > 0:
+        # Try removing common prefixes/suffixes
+        for prefix in ['el ', 'la ', 'les ', 'els ', 'los ', 'las ']:
+            still_unmatched = df_merged['lat'].isna()
+            df_merged.loc[still_unmatched, 'municipio_alt'] = (
+                df_merged.loc[still_unmatched, 'municipio_normalized']
+                .str.replace(f'^{prefix}', '', regex=True)
+            )
+            
+            # Try to match with alternative name
+            for idx in df_merged[still_unmatched].index:
+                alt_name = df_merged.loc[idx, 'municipio_alt']
+                if pd.notna(alt_name):
+                    match = df_geo[df_geo['name_normalized'] == alt_name]
+                    if not match.empty:
+                        df_merged.loc[idx, 'lat'] = match.iloc[0]['lat']
+                        df_merged.loc[idx, 'lon'] = match.iloc[0]['lon']
+    
+    # Final fallback: use Spain's geographic center for unmatched
+    df_merged['lat'] = df_merged['lat'].fillna(40.4168)  # Madrid coordinates
+    df_merged['lon'] = df_merged['lon'].fillna(-3.7038)
+    
+    # Clean up temporary columns
+    df_merged = df_merged.drop(columns=['municipio_normalized', 'name_normalized', 'municipio_alt'], errors='ignore')
+    
+    final_matched = (df_merged['lat'] != 40.4168).sum()
+    st.info(f"📍 Mapped coordinates for {final_matched}/{total} municipalities ({final_matched/total*100:.1f}%)")
+    
+    return df_merged
 
 
 # ===========================================
@@ -86,7 +188,7 @@ def filter_data(df, filters):
         filtered = filtered[filtered['poblacion_total'] <= filters['max_population']]
     
     # Province filter
-    if filters['provinces']:
+    if filters['provinces'] and 'provincia' in filtered.columns:
         filtered = filtered[filtered['provincia'].isin(filters['provinces'])]
     
     # Bank saturation filter
@@ -147,8 +249,8 @@ st.caption("Powered by sophisticated Economic and Social Scoring algorithms with
 # Load data
 with st.spinner("Loading scored municipality data..."):
     df = load_scored_data()
-    province_centers = load_geospatial_data()
-    df = merge_geospatial(df, province_centers)
+    df_geo = load_geospatial_data()
+    df = merge_geospatial(df, df_geo)
 
 st.success(f"✅ Loaded {len(df)} municipalities with scoring data")
 
@@ -221,12 +323,16 @@ with st.sidebar:
         )
     
     with st.expander("Geographic Filters", expanded=False):
-        all_provinces = sorted(df['provincia'].dropna().unique())
-        selected_provinces = st.multiselect(
-            "Select Provinces (empty = all)",
-            options=all_provinces,
-            default=[]
-        )
+        if 'provincia' in df.columns:
+            all_provinces = sorted(df['provincia'].dropna().unique())
+            selected_provinces = st.multiselect(
+                "Select Provinces (empty = all)",
+                options=all_provinces,
+                default=[]
+            )
+        else:
+            st.info("Province data not available in this dataset")
+            selected_provinces = []
     
     with st.expander("Market Conditions", expanded=False):
         max_bank_sat = st.slider(
@@ -338,16 +444,23 @@ st.divider()
 st.subheader(f"🏆 Top {top_n} Recommended Locations")
 
 # Select columns to display
-display_cols = [
-    'municipio', 'provincia', 'poblacion_total', 'num_bancos',
+display_cols = ['municipio']
+if 'provincia' in df_sorted.columns:
+    display_cols.append('provincia')
+display_cols.extend([
+    'poblacion_total', 'num_bancos',
     'economic_score_normalized', 'social_score_normalized', 'current_score'
-]
+])
 
 df_top = df_sorted[display_cols].head(top_n).reset_index(drop=True)
-df_top.columns = [
-    'Municipality', 'Province', 'Population', 'Banks',
+column_names = ['Municipality']
+if 'provincia' in df_sorted.columns:
+    column_names.append('Province')
+column_names.extend([
+    'Population', 'Banks',
     'Economic Score', 'Social Score', 'Total Score'
-]
+])
+df_top.columns = column_names
 
 # Style the dataframe
 styled_df = df_top.style.format({
@@ -418,15 +531,16 @@ top_layer = pdk.Layer(
 )
 
 # Tooltip
+provincia_line = "<b>Province:</b> {provincia}<br/>" if 'provincia' in df_filtered.columns else ""
 tooltip = {
-    "html": """
-    <b>{municipio}</b><br/>
-    <b>Province:</b> {provincia}<br/>
-    <b>Population:</b> {poblacion_total:,.0f}<br/>
-    <b>Banks:</b> {num_bancos:.0f}<br/>
-    <b>Economic Score:</b> {economic_score_normalized:.1f}<br/>
-    <b>Social Score:</b> {social_score_normalized:.1f}<br/>
-    <b>Total Score:</b> {current_score:.1f}
+    "html": f"""
+    <b>{{municipio}}</b><br/>
+    {provincia_line}
+    <b>Population:</b> {{poblacion_total:,.0f}}<br/>
+    <b>Banks:</b> {{num_bancos:.0f}}<br/>
+    <b>Economic Score:</b> {{economic_score_normalized:.1f}}<br/>
+    <b>Social Score:</b> {{social_score_normalized:.1f}}<br/>
+    <b>Total Score:</b> {{current_score:.1f}}
     """,
     "style": {
         "backgroundColor": "rgba(30,30,30,0.95)",

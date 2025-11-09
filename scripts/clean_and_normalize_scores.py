@@ -10,6 +10,7 @@ This script identifies and fixes data quality issues like:
 import pandas as pd
 import numpy as np
 from pathlib import Path
+import argparse as ap
 
 
 def check_and_fix_data_quality(input_path, output_path):
@@ -44,14 +45,14 @@ def check_and_fix_data_quality(input_path, output_path):
     if 'perc_under_35' in df.columns:
         df['perc_under_35'] = df['perc_under_35'].clip(0, 0.5)
     
-    # 2. Check for duplicate municipalities
-    print("\nChecking for duplicates...")
-    duplicates = df[df.duplicated(subset=['municipio', 'provincia'], keep=False)]
-    if len(duplicates) > 0:
-        print(f"  Found {len(duplicates)} duplicate records, keeping first occurrence")
-        df = df.drop_duplicates(subset=['municipio', 'provincia'], keep='first')
-    else:
-        print("  No duplicates found")
+    # # 2. Check for duplicate municipalities
+    # print("\nChecking for duplicates...")
+    # duplicates = df[df.duplicated(subset=['municipio', 'provincia'], keep=False)]
+    # if len(duplicates) > 0:
+    #     print(f"  Found {len(duplicates)} duplicate records, keeping first occurrence")
+    #     df = df.drop_duplicates(subset=['municipio', 'provincia'], keep='first')
+    # else:
+    #     print("  No duplicates found")
     
     # 3. Check for extreme outliers in scores
     print("\nChecking for extreme outliers...")
@@ -113,25 +114,25 @@ def check_and_fix_data_quality(input_path, output_path):
     print("SUMMARY")
     print("="*80)
     print(f"Total municipalities: {len(df)}")
-    print(f"Provinces covered: {df['provincia'].nunique()}")
+    # print(f"Provinces covered: {df['provincia'].nunique()}")
     print(f"\nScore Statistics (Normalized 0-100):")
     print(df[['economic_score_normalized', 'social_score_normalized', 'total_score_alpha_50_normalized']].describe().round(2))
     
     print("\nTop 10 by Economic Score:")
     top_econ = df.nlargest(10, 'economic_score_normalized')[
-        ['municipio', 'provincia', 'poblacion_total', 'num_bancos', 'economic_score_normalized']
+        ['municipio', 'poblacion_total', 'num_bancos', 'economic_score_normalized']
     ]
     print(top_econ.to_string(index=False))
     
     print("\nTop 10 by Social Score:")
     top_social = df.nlargest(10, 'social_score_normalized')[
-        ['municipio', 'provincia', 'poblacion_total', 'num_bancos', 'social_score_normalized']
+        ['municipio', 'poblacion_total', 'num_bancos', 'social_score_normalized']
     ]
     print(top_social.to_string(index=False))
     
     print("\nTop 10 by Balanced Score (alpha=0.5):")
     top_balanced = df.nlargest(10, 'total_score_alpha_50_normalized')[
-        ['municipio', 'provincia', 'poblacion_total', 'num_bancos', 'total_score_alpha_50_normalized']
+        ['municipio', 'poblacion_total', 'num_bancos', 'total_score_alpha_50_normalized']
     ]
     print(top_balanced.to_string(index=False))
     print("="*80)
@@ -140,11 +141,12 @@ def check_and_fix_data_quality(input_path, output_path):
 
 
 if __name__ == "__main__":
-    base_path = Path(__file__).parent.parent / "data"
-    input_file = base_path / "municipalities_with_scores.csv"
-    output_file = base_path / "municipalities_scored_clean.csv"
-    
-    df = check_and_fix_data_quality(input_file, output_file)
-    
-    print(f"\nOutput file: {output_file}")
+    ap = ap.ArgumentParser(description="Clean and Normalize Scores in Municipalities Dataset")
+    ap.add_argument("--input-path", type=str, required=True, help="Path to input CSV file with scored municipalities")
+    ap.add_argument("--output-path", type=str, required=True, help="Path to output CSV file for cleaned municipalities")
+    args = ap.parse_args()
+
+    df = check_and_fix_data_quality(args.input_path, args.output_path)
+
+    print(f"\nOutput file: {args.output_path}")
     print("Data quality check completed.\n")

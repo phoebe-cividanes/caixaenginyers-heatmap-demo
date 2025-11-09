@@ -29,12 +29,12 @@ def preprocess_data(df):
     Preprocess the data to create features needed for scoring functions.
     
     Maps CSV columns to the required format for scoring functions:
-    - avg_income: renta_bruta_media (in thousands)
-    - population_density: densidad
-    - avg_rent_price: average of alquiler_m2_colectiva and alquiler_m2_unifamiliar
-    - normalized_bank_count: num_bancos normalized [0-1]
-    - perc_over_65: percentage of population over 65
-    - perc_under_30: percentage of population under 30
+    - avg_income: from renta_bruta_media (in thousands €)
+    - population_density: from densidad
+    - avg_rent_price: average of alquiler_m2_colectiva and alquiler_m2_unifamiliar (€/m²)
+    - normalized_bank_count: num_bancos normalized to [0-1] range
+    - perc_over_65: percentage of population 65 years and older
+    - perc_under_35: percentage of population under 35 years (estimated from menor_35)
     """
     print("\nPreprocessing data...")
     
@@ -90,6 +90,8 @@ def preprocess_data(df):
     df_processed['poblacion_menor_35'] = df_processed['poblacion_menor_35'].fillna(
         df_processed['poblacion_total'] * median_ratio_under_35
     )
+    
+    df_processed['perc_under_35'] = df_processed['poblacion_menor_35'] / df_processed['poblacion_total']
 
     # Handle any NaN or infinite values
     df_processed = df_processed.replace([np.inf, -np.inf], np.nan)
@@ -190,13 +192,13 @@ def generate_summary_stats(df):
     # Top 10 municipalities by different scores
     print("\nTop 10 by Economic Score:")
     top_economic = df.nlargest(10, 'economic_score')[
-        ['municipio', 'provincia', 'poblacion_total', 'num_bancos', 'economic_score']
+        ['municipio', 'poblacion_total', 'num_bancos', 'economic_score']
     ]
     print(top_economic.to_string(index=False))
     
     print("\nTop 10 by Social Score:")
     top_social = df.nlargest(10, 'social_score')[
-        ['municipio', 'provincia', 'poblacion_total', 'num_bancos', 'social_score']
+        ['municipio', 'poblacion_total', 'num_bancos', 'social_score']
     ]
     print(top_social.to_string(index=False))
     
@@ -204,7 +206,7 @@ def generate_summary_stats(df):
     if 'total_score_alpha_50' in df.columns:
         print("\nTop 10 by Balanced Score (alpha=0.5):")
         top_balanced = df.nlargest(10, 'total_score_alpha_50')[
-            ['municipio', 'provincia', 'poblacion_total', 'num_bancos', 'total_score_alpha_50']
+            ['municipio', 'poblacion_total', 'num_bancos', 'total_score_alpha_50']
         ]
         print(top_balanced.to_string(index=False))
         
@@ -213,22 +215,14 @@ def generate_summary_stats(df):
         print("\nTop 10 by Combined PCA Score:")
         df['combined_pca_score'] = df['PC1_economic'] + df['PC2_social']
         top_pca = df.nlargest(10, 'combined_pca_score')[
-            ['municipio', 'provincia', 'poblacion_total', 'num_bancos', 'combined_pca_score']
+            ['municipio', 'poblacion_total', 'num_bancos', 'combined_pca_score']
         ]
         print(top_pca.to_string(index=False))
 
-def main():
+def main(data_path=None, output_path=None):
     print("\n" + "="*80)
     print("BRANCH LOCATION SCORING PIPELINE")
     print("="*80)
-    
-    parser = ap.ArgumentParser(description="Apply scoring pipeline to municipalities data.")
-    parser.add_argument("--data-path", type=str, default=None, help="Path to the input data CSV file.")
-    parser.add_argument("--output-path", type=str, default=None, help="Path to save the output scored CSV file.")
-    args = parser.parse_args()
-
-    data_path = parser.data_path
-    output_path = parser.output_path
     
     try:
 
@@ -263,11 +257,15 @@ def main():
         print("Added columns: economic_score, social_score, total_score_alpha_[0,25,50,75,100], PC1_economic, PC2_social\n")
         
     except Exception as e:
-        print(f"\nERROR: {str(e)}")
+        print(f"\nError: {str(e)}")
         import traceback
         traceback.print_exc()
         sys.exit(1)
 
 
 if __name__ == "__main__":
-    main()
+    parser = ap.ArgumentParser(description="Apply scoring pipeline to municipalities data.")
+    parser.add_argument("--data-path", type=str, required=True, help="Path to the input data CSV file.")
+    parser.add_argument("--out-path", type=str, required=True, help="Path to save the output scored CSV file.")
+    args = parser.parse_args()
+    main(data_path=args.data_path, output_path=args.out_path)
