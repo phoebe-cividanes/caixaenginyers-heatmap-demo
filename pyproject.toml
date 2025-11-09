@@ -8,4 +8,5 @@ dependencies = [
     "geopy>=2.4.1",
     "pandas>=2.3.3",
     "tqdm>=4.67.1",
+    "matplotlib>=3.10.7",
 ]
