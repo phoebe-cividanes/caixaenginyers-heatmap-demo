@@ -8,9 +8,13 @@ import sys
 import numpy as np
 import pandas as pd
 import streamlit as st
+import requests
 import pydeck as pdk
 from pathlib import Path
 import argparse as ap
+from dotenv import load_dotenv
+
+load_dotenv()
 
 # ===========================================
 # COMMAND LINE ARGUMENTS
@@ -871,3 +875,41 @@ with st.expander("🔧 Technical Details", expanded=False):
 # Footer
 st.divider()
 st.caption("🏦 Caixa Enginyers Branch Location Optimization Tool | Built with Streamlit | Data: INE Spain")
+
+API_KEY = os.getenv("PUBLICAI_API_KEY")
+API_URL = "https://api.publicai.co/v1/chat/completions"
+
+def query_salamandra(prompt: str):
+    headers = {
+        "Authorization": f"Bearer {API_KEY}",
+        "Content-Type": "application/json",
+    }
+    payload = {
+        "model": "BSC-LT/salamandra-7b-instruct-tools-16k",
+        "messages": [
+            {
+                "role": "system",
+                "content": (
+                    "Ets un assistent especialitzat en anàlisi municipal i expansió "
+                    "d'oficines per Caixa Enginyers. Dona respostes concises, "
+                    "numèricament fonamentades i contextuals al municipi o província."
+                ),
+            },
+            {"role": "user", "content": prompt},
+        ],
+        "max_tokens": 500,
+    }
+    try:
+        r = requests.post(API_URL, headers=headers, json=payload, timeout=30)
+        r.raise_for_status()
+        return r.json()["choices"][0]["message"]["content"]
+    except Exception as e:
+        return f"Error en la consulta: {e}"
+
+st.markdown("## 💬 Consulta intel·ligent Salamandra")
+user_prompt = st.text_area("Pregunta sobre l'expansió municipal:", "")
+if st.button("Enviar consulta") and user_prompt:
+    with st.spinner("Consultant Salamandra..."):
+        response = query_salamandra(user_prompt)
+    st.markdown("**Resposta:**")
+    st.write(response)
