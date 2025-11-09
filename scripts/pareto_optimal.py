@@ -47,6 +47,7 @@ plt.ylabel("Household Income (€)", fontsize=12)
 plt.legend()
 plt.grid(alpha=0.3)
 plt.tight_layout()
+plt.savefig(f"pareto.jpg")
 plt.show()
 
 print("Pareto-optimal municipios:") 

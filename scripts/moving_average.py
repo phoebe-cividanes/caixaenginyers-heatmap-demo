@@ -70,7 +70,9 @@ class SimpleMovingAverage:
         plt.ylabel("Total")
         plt.legend()
         plt.tight_layout()
+        plt.savefig(f"prediction_{self.mode}.jpg")
         plt.show()
+
 
     def plot_backtest(self, target_column: str):
         periods, preds, acts, mae, rmse = self.backtest(target_column)
@@ -87,13 +89,15 @@ class SimpleMovingAverage:
         plt.ylabel("Total")
         plt.legend()
         plt.tight_layout()
+        plt.savefig(f"backtest_{self.mode}.jpg")
         plt.show()
+
 
 
 if __name__ == "__main__":
     df = pd.read_csv("../data/popu_growth_population.csv", sep="\t")
 
-    sma = SimpleMovingAverage(df, n_elements=4, n_years=4, mode="SMA")
+    sma = SimpleMovingAverage(df, n_elements=4, n_years=4, mode="EMA")
 
     target_city = "33066 Siero"
     history, predicted = sma.predict(target_city)
