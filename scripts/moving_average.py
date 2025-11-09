@@ -1,5 +1,6 @@
 import pandas as pd
 import matplotlib.pyplot as plt
+import numpy as np
 
 class SimpleMovingAverage:
     def __init__(self, df: pd.DataFrame, n_elements: int = 4, n_years: int = 4, mode: str = "SMA"):
