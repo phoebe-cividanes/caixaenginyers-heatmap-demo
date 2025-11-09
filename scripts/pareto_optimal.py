@@ -36,17 +36,28 @@ plt.plot(pareto_df["poblacion_65_mas"], pareto_df["renta_bruta_media"],
          color="red", linestyle="--", alpha=0.7)
 
 for _, row in pareto_df.iterrows():
-    plt.text(row["poblacion_65_mas"]+0.3, row["renta_bruta_media"]+200,
-             row["municipio"],
-             fontsize=9, fontweight='bold',
-             bbox=dict(facecolor='white', alpha=0.7, edgecolor='none', boxstyle='round,pad=0.2'))
-
+    plt.annotate(
+        row["municipio"],
+        (row["poblacion_65_mas"], row["renta_bruta_media"]),
+        xytext=(5, 5),  # pixel offset for readability
+        textcoords="offset points",
+        fontsize=9,
+        fontweight='bold',
+        color='black',
+        bbox=dict(facecolor='white', alpha=0.7, edgecolor='none', boxstyle='round,pad=0.2'),
+        arrowprops=dict(arrowstyle='-', color='gray', alpha=0.5, lw=0.8)
+    )
 plt.title("Pareto Frontier: Elderly Density vs Household Income", fontsize=14)
 plt.xlabel("Elderly Density (>65)", fontsize=12)
 plt.ylabel("Household Income (€)", fontsize=12)
 plt.legend()
 plt.grid(alpha=0.3)
 plt.tight_layout()
+
+
+ax = plt.gca()
+ax.plot([0, 1], [0, 1], transform=ax.transAxes, color='k', linestyle=':', linewidth=2, label='Visual diagonal')
+
 plt.savefig(f"pareto.jpg")
 plt.show()
 
