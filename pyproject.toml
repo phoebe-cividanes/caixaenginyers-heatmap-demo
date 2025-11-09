@@ -8,8 +8,10 @@ dependencies = [
     "folium>=0.20.0",
     "geopandas>=1.1.1",
     "geopy>=2.4.1",
+    "google-genai>=1.49.0",
     "matplotlib>=3.10.7",
     "networkx>=3.5",
     "osmnx>=2.0.6",
+    "python-dotenv>=1.2.1",
     "shapely>=2.1.2",
 ]
