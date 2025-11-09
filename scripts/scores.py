@@ -97,13 +97,13 @@ def calculate_social_score(data_point):
     and ensuring future viability (youth population).
     """
     perc_over_65 = data_point['perc_over_65']
-    perc_under_30 = data_point['perc_under_30']
+    perc_under_35 = data_point['perc_under_35']
     
     # A location with no youth population should score zero.
-    if perc_under_30 == 0:
+    if perc_under_35 == 0:
         return 0
 
-    community_score = perc_over_65 * perc_under_30 
+    community_score = perc_over_65 * perc_under_35
     financial_need = 1 - data_point['normalized_bank_count']
 
     social_score = community_score * financial_need
@@ -125,11 +125,11 @@ def run_pca_scoring(df):
     Performs PCA on the input DataFrame and returns the DataFrame with principal components.
     """
     features = [
-        'poblacion_2023_total',
-        'densidad_hab_km2',
+        'poblacion_total',
+        'densidad',
         'renta_bruta_media',
-        'bancos',
-        'depopulation_risk',
+        'num_bancos',
+        # 'depopulation_risk',
         'perc_over_65',
         'perc_under_35'
     ]
@@ -144,13 +144,11 @@ def run_pca_scoring(df):
     pca = PCA(n_components=2)
     principal_components = pca.fit_transform(X_scaled)
 
-    pca_df = pd.DataFrame(data=principal_components, columns=['PC1_Economic', 'PC2_Social'])
+    pca_df = pd.DataFrame(data=principal_components, columns=['PC1_economic', 'PC2_social'])
 
     result_df = pd.concat([df, pca_df], axis=1)
 
-    loadings = pd.DataFrame(pca.components_.T, columns=['PC1_Economic', 'PC2_Social'], index=features)
-
-    return result_df, loadings
+    return result_df
 
 
 if __name__ == '__main__':
@@ -161,7 +159,7 @@ if __name__ == '__main__':
         'avg_rent_price': [1200, 1500, 1000],
         'normalized_bank_count': [0.2, 0.5, 0.1],  # 0.1 = financial desert
         'perc_over_65': [0.15, 0.20, 0.10],
-        'perc_under_30': [0.25, 0.15, 0.35]
+        'perc_under_35': [0.25, 0.15, 0.35]
     }
     df = pd.DataFrame(data)
 
