@@ -119,9 +119,16 @@ def merge_geospatial(df, df_geo):
     df['municipio_normalized'] = df['municipio'].str.strip().str.lower()
     df_geo['name_normalized'] = df_geo['name'].str.strip().str.lower()
     
+    # Collapse multiple GeoJSON features with the same name to a single row (mean coordinates)
+    df_geo_collapsed = (
+        df_geo
+        .groupby('name_normalized', as_index=False)
+        .agg({'lat': 'mean', 'lon': 'mean'})
+    )
+    
     # Merge on normalized names
     df_merged = df.merge(
-        df_geo[['name_normalized', 'lat', 'lon']],
+        df_geo_collapsed[['name_normalized', 'lat', 'lon']],
         left_on='municipio_normalized',
         right_on='name_normalized',
         how='left'
@@ -160,6 +167,9 @@ def merge_geospatial(df, df_geo):
     
     # Clean up temporary columns
     df_merged = df_merged.drop(columns=['municipio_normalized', 'name_normalized', 'municipio_alt'], errors='ignore')
+    
+    # Ensure uniqueness by municipio after merge (avoid one-to-many explosions)
+    df_merged = df_merged.drop_duplicates(subset=['municipio'], keep='first')
     
     final_matched = (df_merged['lat'] != 40.4168).sum()
     st.info(f"📍 Mapped coordinates for {final_matched}/{total} municipalities ({final_matched/total*100:.1f}%)")
@@ -260,6 +270,21 @@ st.success(f"✅ Loaded {len(df)} municipalities with scoring data")
 
 with st.sidebar:
     st.header("🎚️ Strategy Control")
+    
+    # Scoring method toggle
+    st.markdown("### **Scoring Method**")
+    use_pca = st.toggle(
+        "🔬 Use PCA Components (Experimental)",
+        value=False,
+        help="Toggle to use raw PCA components (PC1=Economic, PC2=Social) instead of sophisticated scoring function"
+    )
+    
+    if use_pca:
+        st.info("💡 Using normalized PCA components for real-time calculation")
+    else:
+        st.info("✨ Using sophisticated scoring function with sigmoid modeling")
+    
+    st.divider()
     
     # THE KEY CONTROL: Alpha slider
     st.markdown("### **Trade-off: Economic ↔ Social**")
@@ -384,18 +409,74 @@ with st.sidebar:
 # MAIN CONTENT
 # ===========================================
 
-# Get the appropriate score column
-score_col = get_score_column(alpha)
-
-# Check if normalized version exists, otherwise use raw
-score_col_norm = score_col + '_normalized' if score_col + '_normalized' in df_filtered.columns else score_col
-
 # Calculate scores for filtered data
 df_filtered = df_filtered.copy()
-df_filtered['current_score'] = df_filtered[score_col_norm]
 
-# Sort by score
-df_sorted = df_filtered.sort_values('current_score', ascending=False)
+if use_pca:
+    # Use PCA components with real-time alpha calculation
+    # Check if PCA columns exist
+    if 'PC1_economic' not in df_filtered.columns or 'PC2_social' not in df_filtered.columns:
+        st.error("❌ PCA components not found in data. Please run the scoring pipeline first.")
+        st.stop()
+    
+    # Normalize PCA components to 0-100 scale for comparison
+    pc1_min = df_filtered['PC1_economic'].min()
+    pc1_max = df_filtered['PC1_economic'].max()
+    pc2_min = df_filtered['PC2_social'].min()
+    pc2_max = df_filtered['PC2_social'].max()
+    
+    # Avoid division by zero
+    pc1_range = pc1_max - pc1_min if pc1_max != pc1_min else 1
+    pc2_range = pc2_max - pc2_min if pc2_max != pc2_min else 1
+    
+    df_filtered['PC1_normalized'] = ((df_filtered['PC1_economic'] - pc1_min) / pc1_range) * 100
+    df_filtered['PC2_normalized'] = ((df_filtered['PC2_social'] - pc2_min) / pc2_range) * 100
+    
+    # Calculate combined PCA score based on alpha
+    df_filtered['current_score'] = alpha * df_filtered['PC1_normalized'] + (1 - alpha) * df_filtered['PC2_normalized']
+    
+    # For metrics display
+    df_filtered['economic_score_display'] = df_filtered['PC1_normalized']
+    df_filtered['social_score_display'] = df_filtered['PC2_normalized']
+    
+    scoring_method = "PCA Components"
+    
+else:
+    # Use sophisticated scoring function with real-time alpha calculation
+    # Check if required columns exist
+    if 'economic_score' not in df_filtered.columns or 'social_score' not in df_filtered.columns:
+        st.error("❌ Economic/social scores not found in data. Please run the scoring pipeline first.")
+        st.stop()
+    
+    # Normalize economic and social scores to 0-100 scale
+    econ_min = df_filtered['economic_score'].min()
+    econ_max = df_filtered['economic_score'].max()
+    social_min = df_filtered['social_score'].min()
+    social_max = df_filtered['social_score'].max()
+    
+    # Avoid division by zero
+    econ_range = econ_max - econ_min if econ_max != econ_min else 1
+    social_range = social_max - social_min if social_max != social_min else 1
+    
+    df_filtered['economic_score_normalized'] = ((df_filtered['economic_score'] - econ_min) / econ_range) * 100
+    df_filtered['social_score_normalized'] = ((df_filtered['social_score'] - social_min) / social_range) * 100
+    
+    # Calculate combined sophisticated score based on alpha in real-time
+    df_filtered['current_score'] = (
+        alpha * df_filtered['economic_score_normalized'] + 
+        (1 - alpha) * df_filtered['social_score_normalized']
+    )
+    
+    # For metrics display
+    df_filtered['economic_score_display'] = df_filtered['economic_score_normalized']
+    df_filtered['social_score_display'] = df_filtered['social_score_normalized']
+    
+    scoring_method = "Sophisticated Scoring"
+
+# Sort by score and ensure unique municipalities (keep best-scoring row)
+df_filtered = df_filtered.sort_values('current_score', ascending=False)
+df_filtered = df_filtered.drop_duplicates(subset=['municipio'], keep='first')
+df_sorted = df_filtered
 
 # ===========================================
 # METRICS ROW
@@ -404,19 +485,21 @@ df_sorted = df_filtered.sort_values('current_score', ascending=False)
 col1, col2, col3, col4 = st.columns(4)
 
 with col1:
-    avg_economic = df_filtered['economic_score_normalized'].mean()
+    avg_economic = df_filtered['economic_score_display'].mean()
+    metric_label = "Avg PC1 (Economic)" if use_pca else "Avg Economic Score"
     st.metric(
-        "Avg Economic Score",
+        metric_label,
         f"{avg_economic:.1f}",
-        help="Average economic score across filtered municipalities"
+        help="Average economic component across filtered municipalities"
     )
 
 with col2:
-    avg_social = df_filtered['social_score_normalized'].mean()
+    avg_social = df_filtered['social_score_display'].mean()
+    metric_label = "Avg PC2 (Social)" if use_pca else "Avg Social Score"
     st.metric(
-        "Avg Social Score",
+        metric_label,
         f"{avg_social:.1f}",
-        help="Average social score across filtered municipalities"
+        help="Average social component across filtered municipalities"
     )
 
 with col3:
@@ -441,7 +524,7 @@ st.divider()
 # TOP LOCATIONS TABLE
 # ===========================================
 
-st.subheader(f"🏆 Top {top_n} Recommended Locations")
+st.subheader(f"🏆 Top {top_n} Recommended Locations ({scoring_method})")
 
 # Select columns to display
 display_cols = ['municipio']
@@ -449,36 +532,59 @@ if 'provincia' in df_sorted.columns:
     display_cols.append('provincia')
 display_cols.extend([
     'poblacion_total', 'num_bancos',
-    'economic_score_normalized', 'social_score_normalized', 'current_score'
+    'economic_score_display', 'social_score_display', 'current_score'
 ])
 
 df_top = df_sorted[display_cols].head(top_n).reset_index(drop=True)
 column_names = ['Municipality']
 if 'provincia' in df_sorted.columns:
     column_names.append('Province')
-column_names.extend([
-    'Population', 'Banks',
-    'Economic Score', 'Social Score', 'Total Score'
-])
+
+# Column names depend on scoring method
+if use_pca:
+    column_names.extend([
+        'Population', 'Banks',
+        'PC1 (Economic)', 'PC2 (Social)', 'Combined Score'
+    ])
+else:
+    column_names.extend([
+        'Population', 'Banks',
+        'Economic Score', 'Social Score', 'Total Score'
+    ])
 df_top.columns = column_names
 
 # Style the dataframe
-styled_df = df_top.style.format({
+format_dict = {
     'Population': '{:,.0f}',
     'Banks': '{:.0f}',
-    'Economic Score': '{:.1f}',
-    'Social Score': '{:.1f}',
-    'Total Score': '{:.1f}'
-}).background_gradient(subset=['Total Score'], cmap='RdYlGn')
+}
+
+if use_pca:
+    format_dict.update({
+        'PC1 (Economic)': '{:.1f}',
+        'PC2 (Social)': '{:.1f}',
+        'Combined Score': '{:.1f}'
+    })
+    gradient_col = 'Combined Score'
+else:
+    format_dict.update({
+        'Economic Score': '{:.1f}',
+        'Social Score': '{:.1f}',
+        'Total Score': '{:.1f}'
+    })
+    gradient_col = 'Total Score'
+
+styled_df = df_top.style.format(format_dict).background_gradient(subset=[gradient_col], cmap='RdYlGn')
 
 st.dataframe(styled_df, use_container_width=True, height=400)
 
 # Download button
 csv = df_top.to_csv(index=False).encode('utf-8')
+method_suffix = "pca" if use_pca else "sophisticated"
 st.download_button(
     label="📥 Download Top Locations (CSV)",
     data=csv,
-    file_name=f"top_locations_alpha_{int(alpha*100)}.csv",
+    file_name=f"top_locations_{method_suffix}_alpha_{int(alpha*100)}.csv",
     mime="text/csv"
 )
 
@@ -490,33 +596,80 @@ st.divider()
 
 st.subheader("🗺️ Interactive Heatmap")
 
+# Visualization mode selector
+viz_mode = st.radio(
+    "Visualization Style:",
+    options=["Continuous Heatmap", "Points Only", "Heatmap + Points"],
+    index=2,
+    horizontal=True,
+    help="Choose how to display the data on the map"
+)
+
 # Prepare data for visualization
 df_map = df_sorted.head(min(1000, len(df_sorted))).copy()  # Limit for performance
 df_map['color'] = create_color_scale(df_map['current_score'])
 df_map['size'] = radius
+df_map['weight'] = df_map['current_score']  # For heatmap intensity
 
 # Top locations for highlighting
 df_top_map = df_sorted.head(top_n).copy()
 df_top_map['size'] = radius * 1.5
+df_top_map['weight'] = df_top_map['current_score']
 
 # Calculate map center
 center_lat = df_map['lat'].mean()
 center_lon = df_map['lon'].mean()
 
-# Create layers
-scatter_layer = pdk.Layer(
-    "ScatterplotLayer",
-    data=df_map,
-    get_position='[lon, lat]',
-    get_color='color',
-    get_radius='size',
-    pickable=True,
-    opacity=0.6,
-    stroked=True,
-    filled=True,
-    line_width_min_pixels=1,
-)
+# Create layers based on visualization mode
+layers = []
 
+# Continuous heatmap layer using HexagonLayer
+if viz_mode in ["Continuous Heatmap", "Heatmap + Points"]:
+    heatmap_layer = pdk.Layer(
+        "HexagonLayer",
+        data=df_map,
+        get_position='[lon, lat]',
+        get_weight='weight',
+        radius=5000,  # 5km hexagon radius
+        elevation_scale=50,
+        elevation_range=[0, 1000],
+        extruded=True,
+        coverage=0.95,
+        pickable=True,
+        auto_highlight=True,
+        color_range=[
+            [65, 182, 196],    # Light blue (low)
+            [127, 205, 187],   # Teal
+            [199, 233, 180],   # Light green
+            [237, 248, 177],   # Yellow-green
+            [255, 255, 204],   # Light yellow
+            [255, 237, 160],   # Yellow
+            [254, 217, 118],   # Orange-yellow
+            [254, 178, 76],    # Orange
+            [253, 141, 60],    # Red-orange
+            [240, 59, 32],     # Red (high)
+        ],
+        opacity=0.7 if viz_mode == "Heatmap + Points" else 0.8,
+    )
+    layers.append(heatmap_layer)
+
+# Individual points layer
+if viz_mode in ["Points Only", "Heatmap + Points"]:
+    scatter_layer = pdk.Layer(
+        "ScatterplotLayer",
+        data=df_map,
+        get_position='[lon, lat]',
+        get_color='color',
+        get_radius='size',
+        pickable=True,
+        opacity=0.4 if viz_mode == "Heatmap + Points" else 0.6,
+        stroked=True,
+        filled=True,
+        line_width_min_pixels=1,
+    )
+    layers.append(scatter_layer)
+
+# Top locations layer (always show as gold stars)
 top_layer = pdk.Layer(
     "ScatterplotLayer",
     data=df_top_map,
@@ -529,49 +682,128 @@ top_layer = pdk.Layer(
     filled=True,
     line_width_min_pixels=2,
 )
+layers.append(top_layer)
 
 # Tooltip
 provincia_line = "<b>Province:</b> {provincia}<br/>" if 'provincia' in df_filtered.columns else ""
-tooltip = {
-    "html": f"""
-    <b>{{municipio}}</b><br/>
-    {provincia_line}
-    <b>Population:</b> {{poblacion_total:,.0f}}<br/>
-    <b>Banks:</b> {{num_bancos:.0f}}<br/>
-    <b>Economic Score:</b> {{economic_score_normalized:.1f}}<br/>
-    <b>Social Score:</b> {{social_score_normalized:.1f}}<br/>
-    <b>Total Score:</b> {{current_score:.1f}}
-    """,
-    "style": {
-        "backgroundColor": "rgba(30,30,30,0.95)",
-        "color": "white",
-        "fontSize": "12px",
-        "padding": "10px"
+
+if use_pca:
+    tooltip = {
+        "html": f"""
+        <b>{{municipio}}</b><br/>
+        {provincia_line}
+        <b>Population:</b> {{poblacion_total:,.0f}}<br/>
+        <b>Banks:</b> {{num_bancos:.0f}}<br/>
+        <b>PC1 (Economic):</b> {{PC1_normalized:.1f}}<br/>
+        <b>PC2 (Social):</b> {{PC2_normalized:.1f}}<br/>
+        <b>Combined Score:</b> {{current_score:.1f}}
+        """,
+        "style": {
+            "backgroundColor": "rgba(30,30,30,0.95)",
+            "color": "white",
+            "fontSize": "12px",
+            "padding": "10px"
+        }
     }
-}
+else:
+    tooltip = {
+        "html": f"""
+        <b>{{municipio}}</b><br/>
+        {provincia_line}
+        <b>Population:</b> {{poblacion_total:,.0f}}<br/>
+        <b>Banks:</b> {{num_bancos:.0f}}<br/>
+        <b>Economic Score:</b> {{economic_score_normalized:.1f}}<br/>
+        <b>Social Score:</b> {{social_score_normalized:.1f}}<br/>
+        <b>Total Score:</b> {{current_score:.1f}}
+        """,
+        "style": {
+            "backgroundColor": "rgba(30,30,30,0.95)",
+            "color": "white",
+            "fontSize": "12px",
+            "padding": "10px"
+        }
+    }
 
 # Create deck
+view_pitch = 45 if viz_mode == "Continuous Heatmap" else 0
 deck = pdk.Deck(
     initial_view_state=pdk.ViewState(
         latitude=center_lat,
         longitude=center_lon,
         zoom=5.5,
-        pitch=0
+        pitch=view_pitch,
+        bearing=0
     ),
     map_provider="carto",
     map_style="light",
-    layers=[scatter_layer, top_layer],
+    layers=layers,
     tooltip=tooltip
 )
 
 st.pydeck_chart(deck, use_container_width=True)
 
 # Legend
-st.markdown("""
-**Map Legend:**
-- 🔵 Blue → Low Score | 🟡 Yellow → Medium Score | 🔴 Red → High Score
-- ⭐ Gold circles = Top {} locations
-""".format(top_n))
+if viz_mode == "Continuous Heatmap":
+    st.markdown("""
+    **Map Legend:**
+    - 🟦 Blue/Teal → Low Score | 🟨 Yellow → Medium Score | 🟥 Red → High Score
+    - � Hexagon height represents score density
+    - ⭐ Gold circles = Top {} locations
+    - 💡 Tip: Rotate the map by holding Ctrl (Cmd on Mac) and dragging
+    """.format(top_n))
+else:
+    st.markdown("""
+    **Map Legend:**
+    - �🔵 Blue → Low Score | 🟡 Yellow → Medium Score | 🔴 Red → High Score
+    - ⭐ Gold circles = Top {} locations
+    """.format(top_n))
+
+st.divider()
+
+# ===========================================
+# COMPARISON SECTION (if PCA mode)
+# ===========================================
+
+if use_pca:
+    with st.expander("🔬 PCA vs Sophisticated Scoring Comparison", expanded=True):
+        st.markdown(f"""
+        ### Experimental Mode: PCA Components
+        
+        You are currently viewing results using **raw PCA components** combined in real-time:
+        
+        **Formula:**
+        ```
+        Combined Score = α × PC1_normalized + (1-α) × PC2_normalized
+        ```
+        
+        Where:
+        - **PC1 (Economic)**: First principal component from economic variables
+        - **PC2 (Social)**: Second principal component from social variables
+        - **α = {alpha:.2f}**: Your current strategic focus
+        
+        ### Why Compare?
+        
+        **PCA Method (Current):**
+        - ✅ Simple linear combination
+        - ✅ Captures main variance in data
+        - ❌ No domain-specific modeling (sigmoid, costs, etc.)
+        - ❌ Linear assumption may miss non-linear relationships
+        
+        **Sophisticated Scoring (Toggle Off):**
+        - ✅ Domain-specific knowledge (sigmoid market opportunity)
+        - ✅ Non-linear relationships modeled
+        - ✅ Scalable costs and infrastructure penalties
+        - ✅ Multi-factor interactions
+        
+        ### Expected Alignment
+        
+        If PCA and sophisticated scoring produce similar rankings, it suggests:
+        - The sophisticated scoring captures the natural structure of the data
+        - The added complexity is justified by domain knowledge
+        - Both methods agree on opportunity identification
+        
+        **💡 Tip:** Toggle between modes and compare the top 20 municipalities to see how rankings change!
+        """)
 
 st.divider()
 
@@ -582,6 +814,8 @@ st.divider()
 with st.expander("📊 How to Interpret the Results", expanded=False):
     st.markdown(f"""
     ### Current Strategy: {strategy_label}
+    
+    **Scoring Method:** {scoring_method}
     
     **Economic Score (α={alpha:.2f})** considers:
     - Potential revenue (income × density × economic activity)
